@@ -1,6 +1,11 @@
 import streamlit as st
 import os
 import numpy as np
+# --- ĐOẠN MÃ VÁ LỖI QUAN TRỌNG (FIX BUG PILLOW) ---
+import PIL.Image
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+# --------------------------------------------------
 from PIL import Image
 from rembg import remove
 from moviepy.editor import *
@@ -66,44 +71,37 @@ def create_final_video(sim_img, mascot_img, bg_img, text, ratio, duration_limit)
         
     audio_clip = AudioFileClip(audio_path)
     
-    # Giới hạn thời lượng (Nếu audio dài hơn limit thì cắt, nếu ngắn hơn thì video theo audio)
+    # Giới hạn thời lượng
     final_duration = min(audio_clip.duration, duration_limit)
     if audio_clip.duration > final_duration:
-        # Nếu audio dài quá, ta tăng tốc độ (speed up) để vừa khít thời gian (Advanced)
-        # Ở bản basic này ta sẽ cắt audio để tránh lỗi phức tạp, hoặc giữ nguyên nếu chênh lệch ít.
         audio_clip = audio_clip.subclip(0, final_duration)
     
     # 3. Tạo Clip Nền (Background)
-    # Resize ảnh nền AI cho vừa khung video
     bg_resized = bg_img.resize((w, h))
     bg_clip = ImageClip(np.array(bg_resized)).set_duration(final_duration)
     
     clips_to_overlay = [bg_clip]
     
     # 4. Xử lý SIM (Nhân vật chính)
-    # Tách nền sim
     sim_nobg = remove_background(sim_img)
-    sim_w = int(w * 0.45) # Sim chiếm 45% chiều rộng
+    sim_w = int(w * 0.45) 
     sim_h = int(sim_nobg.height * (sim_w / sim_nobg.width))
     sim_nobg = sim_nobg.resize((sim_w, sim_h))
     
-    # Tạo clip SIM với hiệu ứng Zoom nhẹ
     sim_clip = ImageClip(np.array(sim_nobg)).set_duration(final_duration)
     sim_clip = sim_clip.set_position(('center', 'center'))
-    # Hiệu ứng: Zoom từ 100% lên 110%
-    sim_clip = sim_clip.resize(lambda t: 1 + 0.02 * t)
+    sim_clip = sim_clip.resize(lambda t: 1 + 0.02 * t) # Hiệu ứng Zoom
     
     clips_to_overlay.append(sim_clip)
     
     # 5. Xử lý Mascot (Nếu có)
     if mascot_img:
         mascot_nobg = remove_background(mascot_img)
-        mascot_w = int(w * 0.3) # Mascot nhỏ hơn sim chút
+        mascot_w = int(w * 0.3)
         mascot_h = int(mascot_nobg.height * (mascot_w / mascot_nobg.width))
         mascot_nobg = mascot_nobg.resize((mascot_w, mascot_h))
         
         mascot_clip = ImageClip(np.array(mascot_nobg)).set_duration(final_duration)
-        # Vị trí: Góc dưới bên phải (hoặc giữa dưới nếu là dọc)
         pos = ('right', 'bottom') if ratio == "16:9 (Ngang - Youtube)" else ('center', 'bottom')
         mascot_clip = mascot_clip.set_position(pos)
         
@@ -113,8 +111,10 @@ def create_final_video(sim_img, mascot_img, bg_img, text, ratio, duration_limit)
     final_video = CompositeVideoClip(clips_to_overlay, size=(w,h))
     final_video = final_video.set_audio(audio_clip)
     
-    output_filename = "dat_media_ads.mp4"
-    final_video.write_videofile(output_filename, fps=24, codec='libx264', audio_codec='aac')
+    # Sử dụng tempfile để tránh lỗi quyền ghi file trên Cloud
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
+        output_filename = tmp_video.name
+        final_video.write_videofile(output_filename, fps=24, codec='libx264', audio_codec='aac')
     
     return output_filename
 
