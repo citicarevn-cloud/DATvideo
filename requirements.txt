@@ -3,8 +3,8 @@ moviepy==1.0.3
 imageio-ffmpeg
 gTTS
 rembg
-pillow==9.5.0
-numpy<2.0.0
+pillow
+numpy
 huggingface_hub
 scipy
 onnxruntime
