@@ -1,0 +1,8 @@
+streamlit
+moviepy
+gTTS
+rembg
+pillow
+numpy
+huggingface_hub
+scipy
