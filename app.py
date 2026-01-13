@@ -75,11 +75,11 @@ def create_text_image(text, w, h, fontsize=40, color="yellow"):
         font = ImageFont.load_default()
         
     # Tính vị trí giữa
-    # Ở phiên bản Pillow mới, textsize bị thay bằng textbbox
     try:
         left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
         text_w, text_h = right - left, bottom - top
     except:
+        # Fallback cho phiên bản Pillow cũ hơn
         text_w, text_h = draw.textsize(text, font=font)
         
     x = (w - text_w) / 2
@@ -183,25 +183,26 @@ def create_video_v6(sim_img, mascot_img, bg_img, audio_path, script_text, ratio,
         chunk_size = 6
         chunks = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
         
-        # Thời gian mỗi câu hiển thị
-        chunk_duration = final_duration / len(chunks)
-        
-        sub_clips = []
-        for i, chunk in enumerate(chunks):
-            # Tạo ảnh chứa text bằng Pillow (An toàn hơn TextClip)
-            txt_img = create_text_image(chunk, w, h, fontsize=50 if "9:16" in ratio else 40, color=sub_color)
+        if len(chunks) > 0:
+            # Thời gian mỗi câu hiển thị
+            chunk_duration = final_duration / len(chunks)
             
-            txt_clip = (ImageClip(txt_img)
-                        .set_start(i * chunk_duration)
-                        .set_duration(chunk_duration)
-                        .set_position(('center', 'bottom' if "16:9" in ratio else 0.85), relative=True)) # 0.85 là gần đáy
-            
-            # Hiệu ứng chữ nảy lên (Pop up)
-            txt_clip = txt_clip.resize(lambda t: 1 + 0.1 * math.sin(t*10) if t < 0.2 else 1)
-            
-            sub_clips.append(txt_clip)
-            
-        layers.extend(sub_clips)
+            sub_clips = []
+            for i, chunk in enumerate(chunks):
+                # Tạo ảnh chứa text bằng Pillow (An toàn hơn TextClip)
+                txt_img = create_text_image(chunk, w, h, fontsize=50 if "9:16" in ratio else 40, color=sub_color)
+                
+                txt_clip = (ImageClip(txt_img)
+                            .set_start(i * chunk_duration)
+                            .set_duration(chunk_duration)
+                            .set_position(('center', 'bottom' if "16:9" in ratio else 0.85), relative=True)) # 0.85 là gần đáy
+                
+                # Hiệu ứng chữ nảy lên (Pop up)
+                txt_clip = txt_clip.resize(lambda t: 1 + 0.1 * math.sin(t*10) if t < 0.2 else 1)
+                
+                sub_clips.append(txt_clip)
+                
+            layers.extend(sub_clips)
 
     # Render
     final = CompositeVideoClip(layers, size=(w,h)).set_audio(audio_clip)
@@ -267,5 +268,45 @@ if st.button("🚀 XUẤT BẢN VIDEO (RENDER)", type="primary"):
         status = st.empty()
         prog = st.progress(0)
         
+        # --- ĐOẠN NÀY LÀ CHỖ ĐÃ SỬA LỖI INDENTATION (THỤT ĐẦU DÒNG) ---
         try:
-            #
+            # 1. Tạo Audio nếu cần
+            if voice_type == "📝 AI Đọc":
+                status.text("🔊 Đang tạo giọng đọc...")
+                tts = gTTS(input_script, lang='vi')
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+                    tts.save(fp.name)
+                    final_audio = fp.name
+            
+            prog.progress(20)
+            
+            # 2. Check background
+            bg_final = st.session_state['generated_bg']
+            if not bg_final:
+                status.text("🎨 Đang vẽ bối cảnh...")
+                bg_final = generate_ai_background(bg_prompt, hf_token)
+                st.session_state['generated_bg'] = bg_final
+            
+            prog.progress(40)
+            
+            # 3. Load Images
+            sim_pil = Image.open(sim_file).convert("RGBA")
+            mascot_pil = Image.open(mascot_file).convert("RGBA") if mascot_file else None
+            
+            # 4. Render
+            status.text("🎬 Đang xử lý Video & Phụ đề...")
+            out_vid = create_video_v6(
+                sim_pil, mascot_pil, bg_final, final_audio, 
+                input_script, video_ratio, video_duration, 
+                mascot_scale, use_subtitle, subtitle_color
+            )
+            
+            prog.progress(100)
+            status.success("Xong!")
+            st.video(out_vid)
+            
+            with open(out_vid, "rb") as f:
+                st.download_button("⬇️ Tải về", f, file_name=f"{video_name}.mp4", mime="video/mp4")
+                
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
