@@ -1,11 +1,11 @@
 import streamlit as st
 import os
 import numpy as np
-# --- VÁ LỖI TƯƠNG THÍCH PILLOW (GIỮ NGUYÊN) ---
+# --- VÁ LỖI TƯƠNG THÍCH PILLOW ---
 import PIL.Image
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
-# ----------------------------------------------
+# ---------------------------------
 from PIL import Image
 from rembg import remove
 from moviepy.editor import *
@@ -13,19 +13,29 @@ from gtts import gTTS
 from huggingface_hub import InferenceClient
 import tempfile
 import math
+import random
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="DAT Media Studio Pro V4", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="DAT Media Creator V5", layout="wide", page_icon="🎬")
 
 st.markdown("""
 <style>
-    .stButton>button { width: 100%; background-color: #0068C9; color: white; font-weight: bold; padding: 10px 0; }
-    .stTextInput>div>div>input { background-color: #f0f2f6; }
+    .stButton>button { width: 100%; font-weight: bold; padding: 10px 0; }
+    /* Nút tạo nền màu xanh lá */
+    div[data-testid="stButton"] > button:first-child { background-color: #f0f2f6; color: black; border: 1px solid #ccc; }
+    /* Nút xuất bản màu đỏ nổi bật */
+    div[data-testid="stVerticalBlock"] > div:last-child > div > button { background-color: #FF4B4B; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎬 DAT Media - Video Creator (Branding Version)")
+st.title("🎬 DAT Media - Video Creator V5 (Mascot MC)")
 st.markdown("---")
+
+# --- KHỞI TẠO SESSION STATE (LƯU TRẠNG THÁI) ---
+if 'generated_bg' not in st.session_state:
+    st.session_state['generated_bg'] = None
+if 'bg_seed' not in st.session_state:
+    st.session_state['bg_seed'] = 0
 
 # --- SIDEBAR: CẤU HÌNH ---
 with st.sidebar:
@@ -34,120 +44,160 @@ with st.sidebar:
     
     st.divider()
     
-    video_ratio = st.radio("Tỷ lệ khung hình:", ("9:16 (Dọc - Tiktok/Reels)", "16:9 (Ngang - Youtube)"))
+    video_ratio = st.radio("Tỷ lệ khung hình:", ("9:16 (Dọc - Tiktok)", "16:9 (Ngang - Youtube)"))
     video_duration = st.slider("Thời lượng video (giây):", 10, 60, 20)
     
     st.divider()
+    st.subheader("🎭 Chế độ Diễn xuất")
+    # Tùy chọn mới cho Mascot
+    mascot_mode = st.radio("Vai trò của Mascot:", 
+                          ["MC cầm SIM giới thiệu (Mới)", "Đứng góc phụ họa (Cũ)"])
     
-    st.subheader("✨ Hiệu ứng SIM")
+    st.divider()
     effect_type = st.selectbox(
-        "Chọn kiểu chuyển động:",
-        ["Lắc lư (Shake)", "Trượt qua lại (Slide)", "Zoom nhẹ (Zoom In)", "Nhịp đập (Pulse)", "Đứng yên (Static)"]
+        "Hiệu ứng chuyển động:",
+        ["Nhún nhảy (Bounce)", "Lắc lư (Shake)", "Zoom kịch tính", "Đứng yên"]
     )
 
-# --- HÀM HỖ TRỢ LOGIC ---
+# --- HÀM HỖ TRỢ ---
 
 def get_dominant_color_hex(pil_img):
-    """Lấy màu chủ đạo của Logo để AI vẽ nền đồng bộ"""
-    img = pil_img.copy()
-    img = img.convert("RGBA")
-    img = img.resize((50, 50)) # Thu nhỏ để xử lý nhanh
+    img = pil_img.copy().convert("RGBA").resize((50, 50))
     pixels = img.getcolors(50 * 50)
     if not pixels: return None
-    
-    # Sắp xếp màu xuất hiện nhiều nhất (bỏ qua màu trong suốt/trắng/đen)
     sorted_pixels = sorted(pixels, key=lambda t: t[0], reverse=True)
-    
     for count, color in sorted_pixels:
-        # color là (r, g, b, a)
-        if len(color) == 4 and color[3] < 200: continue # Bỏ qua màu trong suốt
-        if sum(color[:3]) > 700 or sum(color[:3]) < 50: continue # Bỏ qua trắng/đen quá
-        
-        # Chuyển sang Hex
+        if len(color) == 4 and color[3] < 200: continue 
+        if sum(color[:3]) > 700 or sum(color[:3]) < 50: continue
         return '#{:02x}{:02x}{:02x}'.format(color[0], color[1], color[2])
-    
-    return None # Không tìm được màu đặc trưng
+    return None
 
-def generate_ai_background(prompt, token, color_hex=None):
+def generate_ai_background(prompt, token, color_hex=None, seed=0):
     if not token: return None
-    
     final_prompt = prompt
-    # Nếu có mã màu logo, ép AI vẽ theo tông màu đó
     if color_hex:
         final_prompt = f"background theme color {color_hex}, {prompt}"
-        
-    print(f"Prompt gửi đi: {final_prompt}") # Debug log
+    
+    # Thêm yếu tố ngẫu nhiên vào prompt để ảnh thay đổi
+    random_styles = ["cinematic lighting", "studio lighting", "soft focus", "vibrant colors"]
+    final_prompt += f", {random_styles[seed % len(random_styles)]}"
     
     try:
         client = InferenceClient("stabilityai/stable-diffusion-xl-base-1.0", token=token)
         return client.text_to_image(final_prompt)
     except: return None
 
-def apply_effect(clip, effect_name, w, h):
-    # Các hàm hiệu ứng giữ nguyên như V3
-    if effect_name == "Zoom nhẹ (Zoom In)":
+# Hàm hiệu ứng nâng cao
+def apply_advanced_effect(clip, effect_name, start_time=0):
+    if effect_name == "Zoom kịch tính":
         return clip.resize(lambda t: 1 + 0.05 * t).set_position('center')
     elif effect_name == "Lắc lư (Shake)":
-        return clip.rotate(lambda t: 5 * math.sin(2 * math.pi * t)).set_position('center')
-    elif effect_name == "Trượt qua lại (Slide)":
-        center_x = w / 2 - clip.w / 2
-        center_y = h / 2 - clip.h / 2
-        return clip.set_position(lambda t: (center_x + 40 * math.sin(t*2), center_y))
-    elif effect_name == "Nhịp đập (Pulse)":
-        return clip.resize(lambda t: 1 + 0.03 * math.sin(t*3)).set_position('center')
+        return clip.rotate(lambda t: 5 * math.sin(2 * math.pi * t + start_time)).set_position('center')
+    elif effect_name == "Nhún nhảy (Bounce)":
+        # Nhún lên xuống
+        return clip.set_position(lambda t: ('center', 100 + 20 * math.sin(5*t))) # Y offset relative
     else:
         return clip.set_position('center')
 
-def create_video(sim_img, mascot_img, logo_img, bg_img, audio_path, effect, ratio, duration):
-    # 1. Thiết lập kích thước
+def create_video_v5(sim_img, mascot_img, logo_img, bg_img, audio_path, effect, ratio, duration, mode):
+    # 1. Setup
     w, h = (1080, 1920) if "9:16" in ratio else (1920, 1080)
     
-    # 2. Xử lý Audio
+    # 2. Audio
     audio_clip = AudioFileClip(audio_path)
     final_duration = min(audio_clip.duration, duration)
     if audio_clip.duration > final_duration:
         audio_clip = audio_clip.subclip(0, final_duration)
+        
+    layers = []
     
-    # 3. Tạo nền
+    # 3. Background Layer
     if bg_img:
         bg_resized = bg_img.resize((w, h))
         bg_clip = ImageClip(np.array(bg_resized)).set_duration(final_duration)
     else:
-        bg_clip = ColorClip(size=(w, h), color=(10,10,10)).set_duration(final_duration)
-        
-    layers = [bg_clip]
+        bg_clip = ColorClip(size=(w, h), color=(20,20,20)).set_duration(final_duration)
+    layers.append(bg_clip)
+
+    # 4. XỬ LÝ MASCOT VÀ SIM (CORE LOGIC MỚI)
     
-    # 4. Mascot (Lớp dưới)
+    # Chuẩn bị ảnh Mascot
+    mascot_clip = None
     if mascot_img:
         mascot_nobg = remove(mascot_img)
-        m_w = int(w * 0.35)
+        # Nếu chế độ MC: Mascot to hơn, đứng giữa
+        m_scale = 0.65 if mode == "MC cầm SIM giới thiệu (Mới)" else 0.35
+        m_w = int(w * m_scale)
         m_h = int(mascot_nobg.height * (m_w / mascot_nobg.width))
         mascot_resized = mascot_nobg.resize((m_w, m_h))
         mascot_clip = ImageClip(np.array(mascot_resized)).set_duration(final_duration)
-        pos = ('center', 'bottom') if "9:16" in ratio else ('right', 'bottom')
-        mascot_clip = mascot_clip.set_position(pos)
-        layers.append(mascot_clip)
 
-    # 5. SIM (Nhân vật chính - Giữ nguyên ảnh gốc)
-    s_w = int(w * 0.55) # Sim chiếm 55%
+    # Chuẩn bị ảnh SIM
+    s_scale = 0.4 if mode == "MC cầm SIM giới thiệu (Mới)" else 0.5
+    s_w = int(w * s_scale)
     s_h = int(sim_img.height * (s_w / sim_img.width))
     sim_resized = sim_img.resize((s_w, s_h))
     sim_clip = ImageClip(np.array(sim_resized)).set_duration(final_duration)
-    sim_anim = apply_effect(sim_clip, effect, w, h)
-    layers.append(sim_anim)
+
+    # --- LOGIC GHÉP VÀ CHUYỂN ĐỘNG ---
     
-    # 6. LOGO (Góc trái trên - Giữ nguyên ảnh gốc)
+    if mode == "MC cầm SIM giới thiệu (Mới)" and mascot_clip:
+        # 1. Mascot đứng giữa dưới
+        mascot_pos_y = h - m_h + 50 # Thụt xuống chút cho tự nhiên
+        mascot_clip = mascot_clip.set_position(('center', mascot_pos_y))
+        
+        # Tạo hiệu ứng chuyển động cho Mascot (Ví dụ: Nhún nhảy)
+        if effect == "Nhún nhảy (Bounce)":
+            mascot_clip = mascot_clip.set_position(lambda t: ('center', mascot_pos_y + 10 * math.sin(4*t)))
+        elif effect == "Lắc lư (Shake)":
+            mascot_clip = mascot_clip.rotate(lambda t: 2 * math.sin(2*t)).set_position(('center', mascot_pos_y))
+            
+        layers.append(mascot_clip)
+        
+        # 2. SIM đặt đè lên Mascot (Vị trí tay cầm giả định)
+        # Giả định tay cầm nằm ở khoảng 60% chiều cao mascot từ trên xuống
+        sim_pos_y_base = mascot_pos_y + m_h * 0.4 
+        
+        # SIM chuyển động ĐỒNG BỘ với Mascot
+        if effect == "Nhún nhảy (Bounce)":
+            # Mascot nhún, SIM cũng phải nhún theo cùng nhịp (4*t)
+            sim_clip = sim_clip.set_position(lambda t: ('center', sim_pos_y_base + 10 * math.sin(4*t)))
+        elif effect == "Lắc lư (Shake)":
+            # Mascot lắc, SIM lắc theo nhưng biên độ lớn hơn xíu để sinh động
+            sim_clip = sim_clip.rotate(lambda t: 2 * math.sin(2*t)).set_position(lambda t: ('center', sim_pos_y_base))
+        else:
+             sim_clip = sim_clip.set_position(('center', sim_pos_y_base))
+             
+        # Thêm hiệu ứng SIM "nổi bật" (Zoom nhẹ độc lập)
+        sim_clip = sim_clip.resize(lambda t: 1 + 0.02 * math.sin(t))
+        
+        layers.append(sim_clip)
+        
+    else:
+        # Chế độ Cũ: Mascot góc, SIM giữa
+        if mascot_clip:
+            pos = ('right', 'bottom') if "16:9" in ratio else ('center', 'bottom')
+            mascot_clip = mascot_clip.set_position(pos)
+            layers.append(mascot_clip)
+            
+        # SIM độc lập
+        sim_clip = sim_clip.set_position(('center', 'center'))
+        if effect == "Nhún nhảy (Bounce)":
+            sim_clip = sim_clip.set_position(lambda t: ('center', h/2 - s_h/2 + 20 * math.sin(2*t)))
+        elif effect == "Lắc lư (Shake)":
+             sim_clip = sim_clip.rotate(lambda t: 5 * math.sin(2*math.pi*t)).set_position('center')
+        
+        layers.append(sim_clip)
+
+    # 5. Logo
     if logo_img:
-        l_w = int(w * 0.15) # Logo chiếm 15% chiều rộng video
+        l_w = int(w * 0.15)
         l_h = int(logo_img.height * (l_w / logo_img.width))
         logo_resized = logo_img.resize((l_w, l_h))
-        
-        logo_clip = ImageClip(np.array(logo_resized)).set_duration(final_duration)
-        # Vị trí: Cách lề trái 30px, lề trên 30px
-        logo_clip = logo_clip.set_position((30, 30))
+        logo_clip = ImageClip(np.array(logo_resized)).set_duration(final_duration).set_position((30, 30))
         layers.append(logo_clip)
     
-    # 7. Xuất file
+    # 6. Render
     final = CompositeVideoClip(layers, size=(w,h)).set_audio(audio_clip)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         out_path = tmp.name
@@ -161,123 +211,112 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. Hình ảnh & Thương hiệu")
-    
-    # SIM (Bắt buộc)
     sim_file = st.file_uploader("🖼️ Tải ảnh SIM (PNG đã tách nền):", type=['png'])
-    if sim_file:
-        st.caption("✅ Đã nhận ảnh SIM")
-        
-    # Mascot (Tùy chọn)
-    mascot_file = st.file_uploader("🦖 Tải ảnh Mascot (Tùy chọn):", type=['png', 'jpg'])
+    mascot_file = st.file_uploader("🦖 Tải ảnh Mascot (Nên dùng ảnh toàn thân):", type=['png', 'jpg'])
+    logo_file = st.file_uploader("©️ Tải Logo:", type=['png', 'jpg'])
     
-    # LOGO (Mới)
-    logo_file = st.file_uploader("©️ Tải Logo (Sẽ đặt góc trái trên):", type=['png', 'jpg'])
     logo_color_hint = None
     if logo_file:
-        # Xem trước logo và lấy màu
-        logo_pil_preview = Image.open(logo_file)
-        st.image(logo_pil_preview, width=100, caption="Logo")
-        logo_color_hint = get_dominant_color_hex(logo_pil_preview)
-        if logo_color_hint:
-            st.caption(f"🎨 Phát hiện tông màu Logo: {logo_color_hint}. AI sẽ vẽ nền theo màu này.")
+        logo_color_hint = get_dominant_color_hex(Image.open(logo_file))
 
 with col2:
-    st.subheader("2. Âm thanh & Nội dung")
+    st.subheader("2. Bối cảnh (Background)")
+    bg_prompt = st.text_input("Mô tả bối cảnh:", value="modern abstract technology background, blue lights, 3d render")
     
-    # Lựa chọn nguồn âm thanh (Radio Button)
-    voice_option = st.radio("Chọn nguồn giọng đọc:", 
-                            ["📝 AI Đọc (Nhập kịch bản)", "🎙️ Tải file ghi âm (MP3/WAV)"])
+    # NÚT TẠO RIÊNG BIỆT CHO BACKGROUND
+    col_bg_btn, col_bg_preview = st.columns([1, 2])
+    with col_bg_btn:
+        if st.button("🎲 Tạo lại bối cảnh mới"):
+            if not hf_token:
+                st.error("Cần nhập Token trước!")
+            else:
+                st.session_state['bg_seed'] += 1 # Tăng seed để ảnh khác đi
+                with st.spinner("Đang vẽ nền mới..."):
+                    # Lấy màu logo (nếu có)
+                    if logo_file and not logo_color_hint:
+                        logo_color_hint = get_dominant_color_hex(Image.open(logo_file))
+                    
+                    new_bg = generate_ai_background(bg_prompt, hf_token, logo_color_hint, st.session_state['bg_seed'])
+                    st.session_state['generated_bg'] = new_bg
+    
+    with col_bg_preview:
+        if st.session_state['generated_bg']:
+            st.image(st.session_state['generated_bg'], caption="Bối cảnh hiện tại", width=200)
+        else:
+            st.info("Chưa có bối cảnh. Hãy bấm nút 'Tạo lại' hoặc chờ hệ thống tự tạo khi xuất video.")
+
+    st.markdown("---")
+    st.subheader("3. Âm thanh")
+    voice_option = st.radio("Nguồn giọng đọc:", ["🎙️ Tải file ghi âm", "📝 AI Đọc"], horizontal=True)
     
     final_audio_path = None
     script_content = ""
-    
-    if voice_option == "📝 AI Đọc (Nhập kịch bản)":
-        script_content = st.text_area("Nhập nội dung quảng cáo:", height=150, 
-                                      placeholder="Ví dụ: Chào các bạn, sim data này siêu rẻ...")
-        if script_content:
-             # Logic xử lý TTS sau khi bấm nút start để tiết kiệm
-             pass
+    if voice_option == "📝 AI Đọc":
+        script_content = st.text_area("Nhập kịch bản:", height=100)
     else:
-        uploaded_audio = st.file_uploader("Tải file giọng đọc lên:", type=['mp3', 'wav'])
+        uploaded_audio = st.file_uploader("Tải file MP3/WAV:", type=['mp3', 'wav'])
         if uploaded_audio:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
                 fp.write(uploaded_audio.getvalue())
                 final_audio_path = fp.name
-                
-    st.markdown("---")
-    bg_prompt = st.text_input("Mô tả bối cảnh nền (Tiếng Anh):", 
-                              value="abstract technology background, bokeh lights, 8k, 3d render")
 
-# Đặt tên video
 st.markdown("---")
-video_name_input = st.text_input("3. Đặt tên file video:", "video_quang_cao_dat_media")
+video_name_input = st.text_input("4. Đặt tên file video:", "video_dat_media_mascot")
 
-# --- NÚT XỬ LÝ TRUNG TÂM ---
-if st.button("🚀 XUẤT BẢN VIDEO NGAY", type="primary"):
+# --- NÚT XỬ LÝ FINAL ---
+if st.button("🚀 XUẤT BẢN VIDEO (RENDER)", type="primary"):
+    # Kiểm tra input
+    valid = True
+    if not hf_token: st.error("Thiếu Token!"); valid = False
+    if not sim_file: st.error("Thiếu ảnh SIM!"); valid = False
+    if voice_option == "📝 AI Đọc" and not script_content: st.error("Thiếu kịch bản!"); valid = False
+    if voice_option == "🎙️ Tải file ghi âm" and not final_audio_path: st.error("Thiếu file âm thanh!"); valid = False
     
-    # Kiểm tra lỗi đầu vào
-    error_msg = ""
-    if not hf_token: error_msg = "⚠️ Chưa nhập Hugging Face Token!"
-    elif not sim_file: error_msg = "⚠️ Chưa tải ảnh SIM!"
-    elif voice_option == "📝 AI Đọc (Nhập kịch bản)" and not script_content.strip():
-        error_msg = "⚠️ Bạn chọn AI đọc nhưng chưa nhập kịch bản!"
-    elif voice_option == "🎙️ Tải file ghi âm (MP3/WAV)" and not final_audio_path:
-        error_msg = "⚠️ Bạn chọn tải file ghi âm nhưng chưa tải file nào lên!"
-        
-    if error_msg:
-        st.error(error_msg)
-    else:
-        # Bắt đầu xử lý
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    if valid:
+        status = st.empty()
+        progress = st.progress(0)
         
         try:
-            # 1. Xử lý Audio (Nếu là AI đọc thì giờ mới tạo file)
-            if voice_option == "📝 AI Đọc (Nhập kịch bản)":
-                status_text.text("🔊 Đang tạo giọng đọc AI...")
+            # 1. Audio AI (nếu chọn)
+            if voice_option == "📝 AI Đọc":
+                status.text("🔊 Đang tạo giọng đọc...")
                 tts = gTTS(script_content, lang='vi')
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
                     tts.save(fp.name)
                     final_audio_path = fp.name
             
-            progress_bar.progress(20)
+            progress.progress(20)
             
-            # 2. Load ảnh
+            # 2. Background (Nếu chưa có thì tạo, nếu có rồi thì dùng lại)
+            bg_to_use = st.session_state['generated_bg']
+            if not bg_to_use:
+                status.text("🎨 Đang vẽ bối cảnh lần đầu...")
+                if logo_file and not logo_color_hint:
+                     logo_color_hint = get_dominant_color_hex(Image.open(logo_file))
+                bg_to_use = generate_ai_background(bg_prompt, hf_token, logo_color_hint, 0)
+                st.session_state['generated_bg'] = bg_to_use
+            
+            progress.progress(40)
+            
+            # 3. Load Images
             sim_pil = Image.open(sim_file).convert("RGBA")
             mascot_pil = Image.open(mascot_file).convert("RGBA") if mascot_file else None
             logo_pil = Image.open(logo_file).convert("RGBA") if logo_file else None
             
-            # 3. Tạo nền AI (Có tính đến màu logo)
-            status_text.text("🎨 AI đang vẽ bối cảnh theo thương hiệu...")
-            # Lấy màu logo nếu chưa có
-            if logo_pil and not logo_color_hint:
-                logo_color_hint = get_dominant_color_hex(logo_pil)
-                
-            bg_img = generate_ai_background(bg_prompt, hf_token, logo_color_hint)
-            progress_bar.progress(50)
-            
-            # 4. Render Video
-            status_text.text("🎬 Đang dựng video và ghép hiệu ứng...")
-            out_video = create_video(
-                sim_pil, mascot_pil, logo_pil, bg_img, 
+            # 4. Render
+            status.text("🎬 Đang diễn hoạt Mascot và SIM...")
+            out_video = create_video_v5(
+                sim_pil, mascot_pil, logo_pil, bg_to_use, 
                 final_audio_path, effect_type, 
-                video_ratio, video_duration
+                video_ratio, video_duration, mascot_mode
             )
             
-            progress_bar.progress(100)
-            status_text.success("✅ Hoàn tất! Video đã sẵn sàng.")
-            
-            # Hiển thị
+            progress.progress(100)
+            status.success("✅ Thành công!")
             st.video(out_video)
             
-            # Nút tải
             with open(out_video, "rb") as f:
-                st.download_button(
-                    label="⬇️ TẢI VIDEO VỀ MÁY",
-                    data=f,
-                    file_name=f"{video_name_input}.mp4",
-                    mime="video/mp4"
-                )
+                st.download_button("⬇️ Tải về", f, file_name=f"{video_name_input}.mp4", mime="video/mp4")
                 
         except Exception as e:
-            st.error(f"Có lỗi xảy ra trong quá trình xử lý: {e}")
+            st.error(f"Lỗi: {e}")
