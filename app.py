@@ -17,20 +17,22 @@ import random
 import requests
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="DAT Media V18 - Tighter Layout", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="DAT Media V19 - Web Layout", layout="wide", page_icon="🎬")
 
 st.markdown("""
 <style>
     .stButton>button { width: 100%; font-weight: bold; padding: 10px 0; }
     div[data-testid="stButton"] > button:first-child { background-color: #f0f2f6; color: black; border: 1px solid #ccc; }
     div[data-testid="stVerticalBlock"] > div:last-child > div > button { background-color: #FF4B4B; color: white; }
+    /* Tinh chỉnh khung viền cho đẹp hơn trên web */
+    div[data-testid="stExpander"] { border: 1px solid #ddd; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- NÚT RESET ---
 col_title, col_reset = st.columns([3, 1])
 with col_title:
-    st.title("🎬 DAT Media V18 - Tighter Anchor Layout")
+    st.title("🎬 DAT Media - Tool Tạo Video Tự Động")
 with col_reset:
     if st.button("🔄 Làm mới (Reset)"):
         for key in st.session_state.keys():
@@ -47,39 +49,24 @@ if 'current_prompt' not in st.session_state: st.session_state['current_prompt'] 
 sys_hf_token = st.secrets.get("HF_TOKEN", None)
 sys_eleven_key = st.secrets.get("ELEVEN_KEY", None)
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Cấu hình API")
-    if sys_hf_token:
-        st.success("✅ HuggingFace: Connected")
-        hf_token = sys_hf_token
-    else:
-        hf_token = st.text_input("🔑 Hugging Face Token:", type="password")
-
-    if sys_eleven_key:
-        st.success("✅ ElevenLabs: Connected")
-        elevenlabs_key = sys_eleven_key
-    else:
-        elevenlabs_key = st.text_input("🎤 ElevenLabs Key:", type="password")
+# --- KHU VỰC CẤU HÌNH API (Đưa lên đầu trang, nằm trong Expander) ---
+# Nếu đã có Key trong Secrets thì đóng lại cho gọn, chưa có thì mở ra
+is_configured = sys_hf_token is not None
+with st.expander("🔑 Cấu hình API (HuggingFace & ElevenLabs)", expanded=not is_configured):
+    col_api_1, col_api_2 = st.columns(2)
+    with col_api_1:
+        if sys_hf_token:
+            st.success("✅ HuggingFace: Đã kết nối")
+            hf_token = sys_hf_token
+        else:
+            hf_token = st.text_input("Hugging Face Token:", type="password")
     
-    st.divider()
-    st.header("⚙️ Video & Hiệu ứng")
-    video_ratio = st.radio("Tỷ lệ:", ("9:16 (Dọc)", "16:9 (Ngang)"))
-    
-    sim_effect_name = st.selectbox(
-        "Hiệu ứng SIM:",
-        [
-            "1. Lơ lửng (Floating)",
-            "2. Nảy tưng tưng (Bounce)",
-            "3. Lắc lư (Swing)",
-            "4. Phóng to thu nhỏ (Pulse)",
-            "5. Xoay tròn 3D (Spin 3D)",
-            "6. Trượt ngang (Slide)",
-            "7. Rung lắc (Shake)"
-        ]
-    )
-    mascot_scale = st.slider("Độ lớn Mascot:", 0.3, 1.2, 0.75)
-    sim_scale_factor = st.slider("Độ lớn Sim:", 0.5, 1.2, 0.8)
+    with col_api_2:
+        if sys_eleven_key:
+            st.success("✅ ElevenLabs: Đã kết nối")
+            elevenlabs_key = sys_eleven_key
+        else:
+            elevenlabs_key = st.text_input("ElevenLabs Key:", type="password")
 
 # --- HÀM HỖ TRỢ ---
 def get_smart_prompt(theme):
@@ -172,8 +159,6 @@ def create_video_v18(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, s
         layers.append(ColorClip(size=(w, h), color=(20,20,30)).set_duration(final_duration))
 
     # --- THUẬT TOÁN SẮP XẾP V18 (Tighter Cluster) ---
-    
-    # Bước 1: Xác định Logo Safe Zone
     logo_bottom_limit = 50
     if logo_img:
         l_w = int(w * 0.18)
@@ -184,40 +169,28 @@ def create_video_v18(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, s
         logo_clip = ImageClip(np.array(logo_resized)).set_duration(final_duration).set_position(logo_pos)
         layers.append(logo_clip)
 
-    # Bước 2: Tính toán kích thước ảnh
     s_w = int(w * s_scale_input)
     s_h = int(sim_img.height * (s_w / sim_img.width))
     sim_resized = sim_img.resize((s_w, s_h))
     
     mascot_resized = None
-    m_h = 0
     if mascot_img:
         m_w = int(w * m_scale)
         m_h = int(mascot_img.height * (m_w / mascot_img.width))
         mascot_resized = mascot_img.resize((m_w, m_h))
 
-    # Bước 3: Định vị SIM trước (Ưu tiên cao nhất)
-    # Đặt tâm SIM lý tưởng ở khoảng 35% chiều cao màn hình (khu vực trên)
     sim_target_center_y = h * 0.35
     sim_y_final = sim_target_center_y - (s_h / 2)
 
-    # Bước 4: Kiểm tra va chạm SIM với Logo
-    # Nếu đỉnh SIM cao hơn giới hạn dưới của Logo -> Đẩy SIM xuống ngay dưới logo
     if sim_y_final < logo_bottom_limit:
         sim_y_final = logo_bottom_limit
 
-    # Bước 5: Định vị Mascot theo SIM (Neo chặt vào SIM)
     if mascot_img:
-        # Tăng độ chồng lấn (overlap) lên 150px để mascot sát vào sim hơn
         overlap_amount = 150 
         mascot_y_final = sim_y_final + s_h - overlap_amount
     else:
-        # Nếu không có Mascot, SIM ra giữa màn hình
          sim_y_final = (h - s_h) / 2
 
-    # --- RENDER VỚI TỌA ĐỘ MỚI ---
-
-    # Render Mascot
     if mascot_resized:
         mascot_clip = ImageClip(np.array(mascot_resized)).set_duration(final_duration)
         mascot_anim = (mascot_clip
@@ -225,14 +198,11 @@ def create_video_v18(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, s
                        .resize(lambda t: 1 + 0.01 * math.sin(2*t)))
         layers.append(mascot_anim)
 
-    # Render Sim
     sim_clip = ImageClip(np.array(sim_resized)).set_duration(final_duration)
     sim_x_final = (w - s_w) / 2
     
-    # Áp dụng hiệu ứng bay lượn
     sim_final = apply_sim_transform(sim_clip, sim_effect_mode, sim_x_final, sim_y_final)
     
-    # Fix X center
     if "Slide" not in sim_effect_mode:
          sim_final = sim_final.set_position(lambda t: ('center', sim_y_final + (15*math.sin(2*t) if "Floating" in sim_effect_mode else 0)))
          
@@ -244,20 +214,51 @@ def create_video_v18(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, s
         final.write_videofile(out_path, fps=24, codec='libx264', audio_codec='aac')
     return out_path
 
-# --- UI CHÍNH ---
-col1, col2 = st.columns(2)
-with col1:
-    st.subheader("1. Hình ảnh")
-    sim_file = st.file_uploader("🖼️ Tải ảnh SIM (Bắt buộc):", type=['png'])
-    mascot_file = st.file_uploader("🦖 Tải ảnh Mascot (Tùy chọn):", type=['png'])
-    logo_file = st.file_uploader("©️ Tải Logo (Tùy chọn):", type=['png'])
+# --- UI CHÍNH (GIAO DIỆN 1 TRANG) ---
+
+# Chia 2 cột lớn: Hình ảnh (Trái) - Nội dung (Phải)
+col_visual, col_content = st.columns(2)
+
+with col_visual:
+    st.header("1. Hình ảnh & Hiệu ứng")
     
-    st.markdown("---")
-    st.subheader("2. Bối cảnh")
-    bg_theme = st.selectbox("Chủ đề:", 
+    # Upload
+    st.markdown("##### 📤 Tải tài nguyên")
+    sim_file = st.file_uploader("Ảnh SIM (Bắt buộc):", type=['png'])
+    mascot_file = st.file_uploader("Ảnh Mascot (Tùy chọn):", type=['png'])
+    logo_file = st.file_uploader("Logo (Tùy chọn):", type=['png'])
+    
+    st.divider()
+    
+    # Cài đặt Video (Chuyển từ Sidebar sang đây)
+    st.markdown("##### 🎛️ Tùy chỉnh hiển thị")
+    video_ratio = st.radio("Tỷ lệ khung hình:", ("9:16 (Dọc - Tiktok)", "16:9 (Ngang - Youtube)"), horizontal=True)
+    
+    sim_effect_name = st.selectbox(
+        "Hiệu ứng chuyển động SIM:",
+        [
+            "1. Lơ lửng (Floating)", "2. Nảy tưng tưng (Bounce)", "3. Lắc lư (Swing)",
+            "4. Phóng to thu nhỏ (Pulse)", "5. Xoay tròn 3D (Spin 3D)",
+            "6. Trượt ngang (Slide)", "7. Rung lắc (Shake)"
+        ]
+    )
+    
+    col_slide_1, col_slide_2 = st.columns(2)
+    with col_slide_1:
+        sim_scale_factor = st.slider("Kích thước SIM:", 0.5, 1.2, 0.8)
+    with col_slide_2:
+        mascot_scale = st.slider("Kích thước Mascot:", 0.3, 1.2, 0.75)
+
+with col_content:
+    st.header("2. Nội dung & Âm thanh")
+    
+    # Bối cảnh
+    st.markdown("##### 🎨 Bối cảnh nền (AI)")
+    bg_theme = st.selectbox("Chọn chủ đề:", 
                            ["Văn phòng hiện đại", "Ngoài trời / Thiên nhiên", 
                             "Trong nhà / Ấm cúng", "Công nghệ / Trừu tượng"])
-    if st.button("🎲 TẠO BỐI CẢNH (GENERATE)"):
+    
+    if st.button("🎲 TẠO BỐI CẢNH MỚI"):
         if hf_token:
             with st.spinner("Đang vẽ..."):
                 smart_prompt = get_smart_prompt(bg_theme)
@@ -266,35 +267,38 @@ with col1:
                 st.session_state['generated_bg'] = bg
     
     if st.session_state['generated_bg']:
-        st.image(st.session_state['generated_bg'], width=200)
+        st.image(st.session_state['generated_bg'], caption="Background Preview", use_column_width=True)
 
-with col2:
-    st.subheader("3. Âm thanh")
-    voice_option = st.radio("Nguồn:", 
+    st.divider()
+    
+    # Âm thanh
+    st.markdown("##### 🔊 Kịch bản / Giọng đọc")
+    voice_option = st.radio("Nguồn âm thanh:", 
                            ["💎 Microsoft Edge TTS (Free)", 
                             "🚀 ElevenLabs (Voice ID)", 
-                            "🎙️ Tải file ghi âm"])
+                            "🎙️ Tải file ghi âm"], horizontal=True)
     
     final_audio_path = None
     input_script = ""
 
     if "Microsoft" in voice_option:
-        voice_gender = st.selectbox("Giọng:", ["Nữ (Hoài My)", "Nam (Nam Minh)"])
-        input_script = st.text_area("Kịch bản:", height=120)
+        voice_gender = st.selectbox("Chọn giọng:", ["Nữ (Hoài My)", "Nam (Nam Minh)"])
+        input_script = st.text_area("Nhập kịch bản quảng cáo:", height=100)
     elif "ElevenLabs" in voice_option:
-        voice_id_input = st.text_input("Voice ID:")
-        input_script = st.text_area("Kịch bản:", height=120)
+        voice_id_input = st.text_input("Dán Voice ID:")
+        input_script = st.text_area("Nhập kịch bản quảng cáo:", height=100)
     else:
-        uploaded_audio = st.file_uploader("File Audio:", type=['mp3', 'wav'])
+        uploaded_audio = st.file_uploader("Tải file Audio (MP3/WAV):", type=['mp3', 'wav'])
         if uploaded_audio:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
                 fp.write(uploaded_audio.getvalue())
                 final_audio_path = fp.name
 
 st.markdown("---")
-video_name = st.text_input("Tên file:", "dat_media_v18")
+# Phần tên file và nút bấm nằm dưới cùng, rộng full màn hình
+video_name = st.text_input("Đặt tên file video:", "dat_media_final")
 
-if st.button("🚀 XUẤT BẢN VIDEO", type="primary"):
+if st.button("🚀 XUẤT BẢN VIDEO (RENDER)", type="primary"):
     error = False
     if not sim_file: st.error("❌ Thiếu ảnh SIM (Bắt buộc)!"); error=True
     if "Tải file" not in voice_option and not input_script: st.error("❌ Thiếu kịch bản!"); error=True
@@ -308,7 +312,7 @@ if st.button("🚀 XUẤT BẢN VIDEO", type="primary"):
                 status.text("🔊 Creating Audio...")
                 final_audio_path = get_audio_from_edge(input_script, voice_gender)
             elif "ElevenLabs" in voice_option:
-                if not elevenlabs_key: st.error("Thiếu Key!"); st.stop()
+                if not elevenlabs_key: st.error("Thiếu ElevenLabs Key!"); st.stop()
                 status.text("🔊 Creating Audio...")
                 final_audio_path = speak_with_elevenlabs(elevenlabs_key, input_script, voice_id_input)
             
@@ -329,7 +333,7 @@ if st.button("🚀 XUẤT BẢN VIDEO", type="primary"):
             logo_pil = Image.open(logo_file).convert("RGBA") if logo_file else None
             
             # RENDER
-            status.text(f"🎬 Calculating Tighter Layout & Rendering...")
+            status.text(f"🎬 Rendering Video...")
             out = create_video_v18(
                 sim_pil, mascot_pil, logo_pil, bg_final, final_audio_path, 
                 video_ratio, sim_effect_name, mascot_scale, sim_scale_factor
