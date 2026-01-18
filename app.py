@@ -17,7 +17,7 @@ import random
 import requests
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="DAT Media V16 - Center Layout", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="DAT Media V17 - Smart Layout", layout="wide", page_icon="🎬")
 
 st.markdown("""
 <style>
@@ -30,7 +30,7 @@ st.markdown("""
 # --- NÚT RESET ---
 col_title, col_reset = st.columns([3, 1])
 with col_title:
-    st.title("🎬 DAT Media V16 - Center Layout")
+    st.title("🎬 DAT Media V17 - Smart Layout")
 with col_reset:
     if st.button("🔄 Làm mới (Reset)"):
         for key in st.session_state.keys():
@@ -79,7 +79,7 @@ with st.sidebar:
         ]
     )
     mascot_scale = st.slider("Độ lớn Mascot:", 0.3, 1.2, 0.75)
-    sim_scale_factor = st.slider("Độ lớn Sim:", 0.5, 1.0, 0.75, help="Chỉnh độ to của Sim so với màn hình")
+    sim_scale_factor = st.slider("Độ lớn Sim:", 0.5, 1.2, 0.8)
 
 # --- HÀM HỖ TRỢ ---
 def get_smart_prompt(theme):
@@ -154,8 +154,8 @@ def apply_sim_transform(clip, effect_name, cx, cy):
     else:
         return clip.set_position((cx, cy))
 
-# --- VIDEO CORE V16 ---
-def create_video_v16(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, sim_effect_mode, m_scale, s_scale_input):
+# --- VIDEO CORE V17 (SMART LAYOUT) ---
+def create_video_v17(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, sim_effect_mode, m_scale, s_scale_input):
     w, h = (1080, 1920) if "9:16" in ratio else (1920, 1080)
     
     audio_clip = AudioFileClip(audio_path)
@@ -171,63 +171,85 @@ def create_video_v16(sim_img, mascot_img, logo_img, bg_img, audio_path, ratio, s
     else:
         layers.append(ColorClip(size=(w, h), color=(20,20,30)).set_duration(final_duration))
 
-    # --- TÍNH TOÁN BỐ CỤC (CENTER CLUSTER) ---
+    # --- THUẬT TOÁN SẮP XẾP VỊ TRÍ (SMART LAYOUT ENGINE) ---
     
-    # 2. Mascot (Nếu có)
-    if mascot_img:
-        # Resize Mascot
-        m_w = int(w * m_scale)
-        m_h = int(mascot_img.height * (m_w / mascot_img.width))
-        mascot_resized = mascot_img.resize((m_w, m_h))
-        mascot_clip = ImageClip(np.array(mascot_resized)).set_duration(final_duration)
-        
-        # Vị trí: Đứng từ khoảng 45% chiều cao màn hình trở xuống (Khu vực Giữa - Dưới)
-        # Để chừa khoảng trống phía trên cho Sim và phía dưới cho thoáng
-        mascot_pos_y_top = h * 0.45 
-        
-        # Hiệu ứng Mascot (Thở nhẹ)
-        mascot_anim = (mascot_clip
-                       .set_position(('center', mascot_pos_y_top))
-                       .resize(lambda t: 1 + 0.01 * math.sin(2*t)))
-        layers.append(mascot_anim)
-        
-        # 3. SIM (Khi có Mascot) -> Nằm ở Khu vực Giữa - Trên
-        # Kích thước Sim: To hơn (0.75 - 0.8)
-        s_w = int(w * s_scale_input)
-        s_h = int(sim_img.height * (s_w / sim_img.width))
-        sim_resized = sim_img.resize((s_w, s_h))
-        sim_clip = ImageClip(np.array(sim_resized)).set_duration(final_duration)
-        
-        # Tính tâm Sim: Nằm ở khoảng 35% chiều cao màn hình (Trên đầu Mascot)
-        # Tính toán để Bottom của Sim hơi chạm vào Top của Mascot (liên kết)
-        sim_center_y = mascot_pos_y_top - (s_h / 2) + 50 # +50 để overlap một chút xíu cho kết nối
-        sim_center_x = (w - s_w) / 2
-        
-    else:
-        # Nếu KHÔNG CÓ Mascot: SIM đứng độc lập ở chính giữa
-        s_w = int(w * s_scale_input)
-        s_h = int(sim_img.height * (s_w / sim_img.width))
-        sim_resized = sim_img.resize((s_w, s_h))
-        sim_clip = ImageClip(np.array(sim_resized)).set_duration(final_duration)
-        sim_center_x = (w - s_w) / 2
-        sim_center_y = h / 2
-
-    # Áp dụng hiệu ứng bay lượn cho Sim
-    sim_final = apply_sim_transform(sim_clip, sim_effect_mode, sim_center_x, sim_center_y - s_h/2)
-    
-    # Fix lại vị trí X cho các hiệu ứng không trượt
-    if "Slide" not in sim_effect_mode:
-         sim_final = sim_final.set_position(lambda t: ('center', sim_center_y - s_h/2 + (15*math.sin(2*t) if "Floating" in sim_effect_mode else 0)))
-
-    layers.append(sim_final)
-
-    # 4. Logo (Tùy chọn)
+    # Bước 1: Xác định Vùng An Toàn của Logo (Logo Safe Zone)
+    logo_bottom_limit = 50 # Mặc định nếu không có logo
     if logo_img:
         l_w = int(w * 0.18)
         l_h = int(logo_img.height * (l_w / logo_img.width))
         logo_resized = logo_img.resize((l_w, l_h))
-        logo_clip = ImageClip(np.array(logo_resized)).set_duration(final_duration).set_position((30, 40)) 
+        logo_pos = (30, 40)
+        
+        # Vùng cấm: Y của logo + Chiều cao logo + 20px padding
+        logo_bottom_limit = logo_pos[1] + l_h + 20
+        
+        logo_clip = ImageClip(np.array(logo_resized)).set_duration(final_duration).set_position(logo_pos)
         layers.append(logo_clip)
+
+    # Bước 2: Tính toán SIM và Mascot (Dự kiến ban đầu)
+    
+    # -- Chuẩn bị Mascot --
+    mascot_h_final = 0
+    mascot_y_final = h # Mặc định ẩn
+    
+    if mascot_img:
+        m_w = int(w * m_scale)
+        m_h = int(mascot_img.height * (m_w / mascot_img.width))
+        mascot_resized = mascot_img.resize((m_w, m_h))
+        mascot_h_final = m_h
+        # Vị trí dự kiến: Cách đáy màn hình 1 chút
+        mascot_y_final = h - m_h * 0.85 
+
+    # -- Chuẩn bị SIM --
+    s_w = int(w * s_scale_input)
+    s_h = int(sim_img.height * (s_w / sim_img.width))
+    sim_resized = sim_img.resize((s_w, s_h))
+    
+    # Vị trí dự kiến của SIM:
+    if mascot_img:
+        # Nằm trên đầu Mascot, chồng lên nhau khoảng 50px để tạo liên kết
+        sim_y_final = mascot_y_final - s_h + 50 
+    else:
+        # Giữa màn hình
+        sim_y_final = (h - s_h) / 2
+
+    # Bước 3: KIỂM TRA VA CHẠM (COLLISION CHECK) & ĐIỀU CHỈNH
+    
+    # Nếu Đỉnh SIM cao hơn Đáy Logo (tức là sim_y_final NHỎ HƠN logo_bottom_limit)
+    if sim_y_final < logo_bottom_limit:
+        # Tính khoảng cách bị chồng lấn
+        overlap_distance = logo_bottom_limit - sim_y_final
+        
+        # Đẩy SIM xuống
+        sim_y_final += overlap_distance
+        
+        # Nếu có Mascot, cũng phải đẩy Mascot xuống theo để giữ liên kết
+        if mascot_img:
+            mascot_y_final += overlap_distance
+
+    # --- RENDER VỚI TỌA ĐỘ ĐÃ ĐIỀU CHỈNH ---
+
+    # Render Mascot
+    if mascot_img:
+        mascot_clip = ImageClip(np.array(mascot_resized)).set_duration(final_duration)
+        mascot_anim = (mascot_clip
+                       .set_position(('center', mascot_y_final))
+                       .resize(lambda t: 1 + 0.01 * math.sin(2*t)))
+        layers.append(mascot_anim)
+
+    # Render Sim
+    sim_clip = ImageClip(np.array(sim_resized)).set_duration(final_duration)
+    sim_x_final = (w - s_w) / 2
+    
+    # Áp dụng hiệu ứng bay lượn (với tọa độ Y đã được fix lỗi chồng lấn)
+    sim_final = apply_sim_transform(sim_clip, sim_effect_mode, sim_x_final, sim_y_final)
+    
+    # Fix X center cho hiệu ứng không trượt
+    if "Slide" not in sim_effect_mode:
+         sim_final = sim_final.set_position(lambda t: ('center', sim_y_final + (15*math.sin(2*t) if "Floating" in sim_effect_mode else 0)))
+         
+    layers.append(sim_final)
 
     final = CompositeVideoClip(layers, size=(w,h)).set_audio(audio_clip)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
@@ -283,7 +305,7 @@ with col2:
                 final_audio_path = fp.name
 
 st.markdown("---")
-video_name = st.text_input("Tên file:", "dat_media_v16")
+video_name = st.text_input("Tên file:", "dat_media_v17")
 
 if st.button("🚀 XUẤT BẢN VIDEO", type="primary"):
     error = False
@@ -320,8 +342,8 @@ if st.button("🚀 XUẤT BẢN VIDEO", type="primary"):
             logo_pil = Image.open(logo_file).convert("RGBA") if logo_file else None
             
             # RENDER
-            status.text(f"🎬 Rendering with Center Layout...")
-            out = create_video_v16(
+            status.text(f"🎬 Calculating Smart Layout & Rendering...")
+            out = create_video_v17(
                 sim_pil, mascot_pil, logo_pil, bg_final, final_audio_path, 
                 video_ratio, sim_effect_name, mascot_scale, sim_scale_factor
             )
